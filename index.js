@@ -1,10 +1,12 @@
-const fs = require('fs');
-const path = require('path');
-const { Client, GatewayIntentBits, Collection } = require('discord.js');
-const { DisTube } = require('distube');
-const { YtDlpPlugin } = require('@distube/yt-dlp');
-require('dotenv').config();
+// Importar dependencias
+const { Client, GatewayIntentBits, Partials, Collection } = require("discord.js");
+const { DisTube } = require("distube");
+const { YtDlpPlugin } = require("@distube/yt-dlp");
+const fs = require("fs");
+const path = require("path");
+require("dotenv").config();
 
+// Crear cliente de Discord
 const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
@@ -12,64 +14,61 @@ const client = new Client({
     GatewayIntentBits.GuildMessages,
     GatewayIntentBits.MessageContent,
   ],
+  partials: [Partials.Channel],
 });
 
-client.commands = new Collection();
+// Inicializar DisTube (sin leaveOnEmpty ni opciones obsoletas)
+client.distube = new DisTube(client, {
+  emitNewSongOnly: true,
+  emitAddSongWhenCreatingQueue: false,
+  plugins: [new YtDlpPlugin()],
+});
 
-const commandFiles = fs.readdirSync('./commands').filter(file => file.endsWith('.js'));
+// Eventos de DisTube
+client.distube
+  .on("playSong", (queue, song) => {
+    queue.textChannel?.send(`🎶 Reproduciendo: **${song.name}**`);
+  })
+  .on("addSong", (queue, song) => {
+    queue.textChannel?.send(`✅ Añadida: **${song.name}**`);
+  })
+  .on("empty", queue => {
+    queue.voice?.leave();
+    queue.textChannel?.send("💨 El canal está vacío, salgo automáticamente.");
+  })
+  .on("error", (channel, error) => {
+    console.error(error);
+    if (channel) channel.send("❌ Ocurrió un error al reproducir la canción.");
+  });
+
+// Cargar comandos automáticamente
+client.commands = new Collection();
+const commandsPath = path.join(__dirname, "commands");
+const commandFiles = fs.readdirSync(commandsPath).filter(file => file.endsWith(".js"));
+
 for (const file of commandFiles) {
   const command = require(`./commands/${file}`);
   client.commands.set(command.data.name, command);
 }
 
-client.on('interactionCreate', async interaction => {
-  if (!interaction.isCommand()) return;
+// Manejar interacción de comandos
+client.on("interactionCreate", async interaction => {
+  if (!interaction.isChatInputCommand()) return;
 
   const command = client.commands.get(interaction.commandName);
   if (!command) return;
 
   try {
-    await command.execute(interaction);
-  } catch (err) {
-    console.error(err);
-    await interaction.reply({ content: '❌ Error al ejecutar el comando.', ephemeral: true });
+    await command.execute(interaction, client);
+  } catch (error) {
+    console.error(error);
+    await interaction.reply({ content: "❌ Ocurrió un error al ejecutar el comando.", ephemeral: true });
   }
 });
 
-// Configuración de Distube con yt-dlp del venv y solo audio MP3
-const distube = new DisTube(client, {
-  plugins: [new YtDlpPlugin({
-    update: false,
-    youtubeDL: false,
-    ytdlOptions: {
-      dlPath: "C:\\Users\\PC\\mi-bot-discord\\venv\\Scripts\\yt-dlp.exe", // ruta a yt-dlp del venv
-      format: "bestaudio",
-      extractAudio: true,
-      audioFormat: "mp3",
-      audioQuality: 0,
-      highWaterMark: 1024 * 1024 * 64, // para streams largos
-    }
-  })],
-});
-
-client.distube = distube;
-
-client.once('ready', () => {
-  console.log(`✅ Bot listo como ${client.user.tag}`);
-});
-
-// Evento para enviar embed cuando se reproduce una canción
-distube.on('playSong', (queue, song) => {
-  queue.textChannel.send({
-    embeds: [{
-      title: `🎶 Reproduciendo: ${song.name}`,
-      url: song.url,
-      description: `Duración: \`${song.formattedDuration}\``,
-      thumbnail: { url: song.thumbnail },
-      footer: { text: `Solicitado por ${song.user.tag}` },
-      color: 0x1DB954,
-    }]
-  });
+// Iniciar sesión
+client.once("ready", () => {
+  console.log(`✅ Conectado como ${client.user.tag}`);
 });
 
 client.login(process.env.TOKEN);
